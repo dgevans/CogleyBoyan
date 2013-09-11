@@ -16,11 +16,10 @@ import bayesian_log as bayesian
 rank = w.Get_rank()
 
 Para = primitives.parameters()
-#Para.lp.a_q_sigma0 = 0.02
-#Para.lp.a_q_bar0 =0.16
-Para.lp.integrate_order = 4
+Para.lp.a_q_sigma0 = 0.01
 norder = [6,6,6]
-XRE,VfRE = re.findRE(Para,norder)
+Para.lp.set_integrate_order(4)
+#XRE,VfRE = re.findRE(Para,norder)
 
 #a_q_hat = linspace(min(XRE[:,2]),max(XRE[:,2]),100)
 #for i in range(0,36):
@@ -28,13 +27,21 @@ XRE,VfRE = re.findRE(Para,norder)
 #    plot(a_q_hat,VfRE(Xhat))
 
 #Now solve bayesian problem
-sHist = Para.lp.drawSample(15,1000,[0.3,1.])[0]
+grid = Para.lp.getREgrid(array(norder))
+XRE = primitives.makeGrid(grid)
+sHist = Para.lp.drawSample(1000,100,[mean(XRE[:,0]),mean(XRE[:,1])])[0]
 print 'computing posteriors'
-my_samples = bayesian.computePosteriors(Para,sHist,skip=10)
+zgrid,qgrid,_ = Para.lp.getREgrid(norder)
+sGrid = primitives.makeGrid((zgrid,qgrid))
+my_samples = bayesian.computePosteriors(Para,sHist,sGrid,skip=10)
 X = bayesian.getX(Para)
-Vs = VfRE(X[:,:3])#map(lambda x: VfRE(x[:3]),X)
-Vf = primitives.ValueFunction(Para,['spline','spline','hermite','hermite'],[6,6,2,2],[2]*4)
+Vs = -10*ones(len(X))#VfRE(X[:,:3])#map(lambda x: VfRE(x[:3]),X)
+Vf = primitives.ValueFunction(Para,['hermite','hermite','hermite','hermite'],[2,2,2,2],[1]*4,normalize=True)
 Vf.fit(X,Vs)
-Vf.fitV(Vs)
 
 Vf = bayesian.solveBellman(Para,Vf)
+if rank == 0:
+    fout = open('solution.dat','w')
+    import cPickle
+    cPickle.dump((Vf,sHist),fout)
+    fout.close()

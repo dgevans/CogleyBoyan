@@ -7,7 +7,8 @@ Created on Sun May 19 14:41:35 2013
 from LearningProblems import a_q_c
 from numpy import *
 from cpp_interpolator import *
-
+from copy import copy
+from scipy.linalg import sqrtm
 
 class parameters(object):
     
@@ -24,26 +25,32 @@ class ValueFunction(object):
     '''
     Holds the interpolated value functions
     '''
-    eta = 1e-6
-    def __init__(self,Para,types,order,k):
+    eta = 1e-8
+    def __init__(self,Para,types,order,k,normalize = False):
         '''
         Inits the value function object
         '''
         self.f = None
         self.INFO = interpolate_INFO(types,order,k)
-        self.beta = 0.
-        self.gamma = 0.
+        self.beta = Para.beta
+        self.gamma = Para.gamma
+        self.normalize = normalize
     
     def fit(self,X,V):
         '''
         Fits the constant consumption per capital equivalent
         '''
         Y = ((1.-self.beta)*(1.-self.gamma)*V)**(1./(1-self.gamma))
-        self.X = X
-        if self.eta > 0:
-            self.f = interpolate(X,Y,self.INFO,self.eta)
+        if self.normalize:
+            self.mu = mean(X,0).reshape(1,X.shape[1])
+            self.S = linalg.inv(real(sqrtm(cov(X.T))))
+            self.X = (X-self.mu).dot(self.S)
         else:
-            self.f = interpolate(X,Y,self.INFO)
+            self.X = X
+        if self.eta > 0:
+            self.f = interpolate(self.X,Y,self.INFO,self.eta)
+        else:
+            self.f = interpolate(self.X,Y,self.INFO)
     def fitV(self,V):
         '''
         Fits the constant consumption per capital equivalent
@@ -57,7 +64,12 @@ class ValueFunction(object):
         '''
         Returns the value function at the numpy array X
         '''
-        return (self.f(X))**(1.-self.gamma)/((1-self.gamma)*(1.-self.beta))
+        if self.normalize:
+            x = (X-self.mu).dot(self.S)
+            x = vectorize(lambda z:min(max(z,-2.),2.))(x)
+        else:
+            x = X    
+        return (self.f(x))**(1.-self.gamma)/((1-self.gamma)*(1.-self.beta))
     
     
  
@@ -94,7 +106,7 @@ def makeGrid(x):
             temp %= n[j]
     return X
     
-def makeGrid(x):
+def makeGrid_generic(x):
     '''
     Makes a grid to interpolate on from list of x's
     '''
@@ -102,12 +114,15 @@ def makeGrid(x):
     n = []
     n.append(N)
     for i in range(0,len(x)):
-        N *= x[i].shape[0]
+        N *= len(x[i])
         n.append(N)
-    X = zeros((N,len(x)))
+    X =[]
     for i in range(0,N):
         temp = i
+        temp_X = []
         for j in range(len(x)-1,-1,-1):
-            X[i,j] = x[j][temp/n[j]]
+            temp_X.append(x[j][temp/n[j]])
             temp %= n[j]
+        temp_X.reverse()
+        X.append(temp_X)
     return X

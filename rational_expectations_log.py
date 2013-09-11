@@ -71,7 +71,7 @@ def findRE(Para,norder=None):
     Vs_old = Vf(X).flatten()
     #solve bellman
     diff = 1
-    while diff >0.02:
+    while diff >1e-3:
         Vs = hstack(map(lambda state: T(Vf)(state)[1],X))
         #Vfnew = interpolate(X,Vs,INFO)
         Vf.fit(X,Vs)

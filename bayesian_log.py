@@ -53,7 +53,7 @@ class BellmanMap(object):
         V = c**(1.-gamma)/(1.-gamma)+beta*g**(1.-gamma)*EV
         return array([c,g]),V
         
-def computePosteriors(Para,sHist,skip=1):
+def computePosteriors(Para,sHist,sGrid,skip=1):
     '''
     Computes the posteriors across states 
     '''
@@ -73,7 +73,15 @@ def computePosteriors(Para,sHist,skip=1):
         s = sHist[t,i,:]
         mu = Para.lp.getPosterior(sHist[:t,i,:])
         my_domain.append((s,mu))
+    
+    #Para.my_domain = primitives.makeGrid_generic((sGrid,my_posteriors))
+    #for domain in Para.my_domain:
+    #    s,mu = domain
+    #    domain[1] = mu.set_state(s)
+    #now reset my_domain to ch
     Para.my_domain = my_domain
+    print len(Para.my_domain)
+    
     return my_samples
     
 def getX(Para):
@@ -103,27 +111,35 @@ def solveBellman(Para,Vf):
     X = getX(Para)
     T = BellmanMap(Para)
     Vs_old = Vf(X).flatten()
-    
     diff = 1.
     while diff > 1e-5:
-        Vnew = T(Vf)
-        #my_Vs = hstack(map(lambda state:Vnew(state)[1],Para.my_domain))
-        my_Vs = zeros(len(Para.my_domain))
-        for i,state in enumerate(Para.my_domain):
-            my_Vs[i] = Vnew(state)[1]
-            if isnan(my_Vs[i]):
-                pdb.set_trace()
-        Vs = w.gather(my_Vs)
-        if rank == 0:
-            Vs = hstack(Vs)
+        Vs = iterateBellman(T,Vf,Para)
         #Now fit the new value function
+        c_old = Vf.f.get_c()
         Vf.fit(X,Vs)
+        Vf.f.set_c(0.05*Vf.f.get_c()+0.95*c_old)
         diff = max(abs((Vs-Vs_old)/Vs_old))
         if rank == 0:
             print diff
         Vs_old = Vs
         
     return Vf
+    
+def iterateBellman(T,Vf,Para):
+    '''
+    '''
+    rank = w.Get_rank()
+    Vnew = T(Vf)
+    #my_Vs = hstack(map(lambda state:Vnew(state)[1],Para.my_domain))
+    my_Vs = zeros(len(Para.my_domain))
+    for i,state in enumerate(Para.my_domain):
+        my_Vs[i] = Vnew(state)[1]
+        if isnan(my_Vs[i]):
+            pdb.set_trace()
+    Vs = w.gather(my_Vs)
+    if rank == 0:
+        Vs = hstack(Vs)
+    return w.bcast(Vs)
         
     
         

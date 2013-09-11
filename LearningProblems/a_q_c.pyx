@@ -8,6 +8,8 @@ from numpy import *
 cimport numpy as np
 from scipy import stats
 from scipy import integrate
+from sparse_integrator import sparse_integrator
+from sparse_integrator import sparse_integrator_normal
 
 cdef extern from "gsl/gsl_randist.h":
     double gsl_ran_gaussian_pdf(double x,double sigma)
@@ -26,6 +28,15 @@ a_z = 0.0
 rho_z = 0.95
 sigma_q = 0.025#0.2878
 sigma_z = 0.025
+
+Integrate2d = sparse_integrator(2,integrate_order)
+Integrate3d = sparse_integrator_normal(3,integrate_order)
+
+def set_integrate_order(i_o):
+    global integrate_order,Integrate2d,Integrate3d
+    integrate_order = i_o
+    Integrate2d = sparse_integrator(2,integrate_order)
+    Integrate3d = sparse_integrator_normal(3,integrate_order)
 
 
 
@@ -46,6 +57,9 @@ cdef class posterior_distribution:
         self.z = state[0]
         self.q = state[1]
         self.state_moments = zeros(4)
+        
+    def set_state(self,state):
+        return posterior_distribution(self.a_q_bar,self.a_q_sigma,state)
         
     def __call__(self,a_q):
         '''
@@ -79,6 +93,16 @@ cdef class posterior_distribution:
         self.state_moments[1] = qprime
         self.state_moments[2:] = mom
         return self.posterior_likelihood(a_q,zprime,qprime )*Vf(self.state_moments)
+        
+    cdef double posterior_integrand2(self,Vf,double a_q,double zprime,double qprime ):
+        '''
+        Fast function or computing the likelihood over a_q,zprime and qprime
+        '''
+        mom =  self.moments_prime(qprime)
+        self.state_moments[0] = zprime
+        self.state_moments[1] = qprime
+        self.state_moments[2:] = mom
+        return Vf(self.state_moments)
             
     def moments(self,stateprime = None):
         '''
@@ -98,21 +122,34 @@ cdef class posterior_distribution:
         '''
         Computes the expected value of the value function from the posterior distribution
         '''
-        #compute the lmits of integrations
-        a_q_limits = [self.a_q_bar-2*self.a_q_sigma,self.a_q_bar+2*self.a_q_sigma]
-        mu_z = a_z+rho_z*self.z
-        z_limits = [mu_z-2*sigma_z,mu_z+2*sigma_z]
-        mu_q_l = a_q_limits[0]+rho_q*self.q
-        mu_q_u = a_q_limits[1]+rho_q*self.q
-        q_limits = [mu_q_l-2*sigma_q,mu_q_u+2*sigma_q]
         
+        #a_q_limits,z_limits,q_limits = self.getEVlimits()
+
         #compute the integral
-        den = integrate_fixed3(lambda a_q,z,q: self.posterior_likelihood(a_q,z,q),a_q_limits,z_limits,q_limits)
-        num = integrate_fixed3(lambda a_q,z,q: self.posterior_integrand(Vf,a_q,z,q),a_q_limits,z_limits,q_limits)
+        #den = integrate_fixed3(lambda a_q,z,q: self.posterior_likelihood(a_q,z,q),a_q_limits,z_limits,q_limits)
+        #num = integrate_fixed3(lambda a_q,z,q: self.posterior_integrand(Vf,a_q,z,q),a_q_limits,z_limits,q_limits)
+        #den = Integrate3d(lambda x: self.posterior_likelihood(x[0],x[1],x[2]),a_q_limits,z_limits,q_limits)
+        mu = array([self.a_q_bar,a_z+rho_z*self.z,self.a_q_bar+rho_q*self.q])
+        a_q_var = self.a_q_sigma**2
+        Sigma = array([[a_q_var,0,a_q_var],[0.,sigma_z,0.],[a_q_var,0.,a_q_var+sigma_q**2]])
+        num = Integrate3d(lambda x: self.posterior_integrand2(Vf,x[0],x[1],x[2]),mu,Sigma)
         
         #return expected value
-        return num/den
-                
+        return num
+        
+    def getEVlimits(self):
+        '''
+        Computes the limits for the integration
+        '''
+                #compute the lmits of integrations
+        zgrid,qgrid,a_q_grid = getREgrid([2]*3)
+        a_q_limits = [max(self.a_q_bar-2*self.a_q_sigma,a_q_grid[0]),min(self.a_q_bar+2*self.a_q_sigma,a_q_grid[1])]
+        mu_z = a_z+rho_z*self.z
+        z_limits = [min(mu_z-2*sigma_z,zgrid[0]),max(mu_z+2*sigma_z,zgrid[1])]
+        mu_q_l = a_q_limits[0]+rho_q*self.q
+        mu_q_u = a_q_limits[1]+rho_q*self.q
+        q_limits = [min(mu_q_l-2*sigma_q,qgrid[0]),max(mu_q_u+2*sigma_q,qgrid[1])]   
+        return a_q_limits,z_limits,q_limits
 
 def prior(a_q):
     '''
@@ -149,10 +186,12 @@ def getEV_RE_accurate(a_q,state,Vf):
     cdef double z,q
     z = state[0]
     q = state[1]
+    zgrid,qgrid,_ = getREgrid([2]*3)
     mu_z = a_z+rho_z*z
-    z_limits = [mu_z-4*sigma_z,mu_z+4*sigma_z]
+    z_limits = [max(mu_z-4*sigma_z,zgrid[0]),min(mu_z+4*sigma_z,zgrid[1])]
     mu_q = a_q+rho_q*q
-    q_limits = [mu_q-4*sigma_q,mu_q+4*sigma_q]
+    q_limits = [max(mu_q-4*sigma_q,qgrid[0]),min(mu_q+4*sigma_q,qgrid[1])]
+
 
     den = integrate.dblquad(lambda zprime,qprime: likelihood_c(a_q,z,q,zprime,qprime),q_limits[0],q_limits[1]
                     ,lambda q:z_limits[0],lambda z: z_limits[1])[0]
@@ -176,10 +215,12 @@ def getEV_RE(a_q,state,Vf):
     cdef double z,q
     z = state[0]
     q = state[1]
+    zgrid,qgrid,_ = getREgrid([2]*3)
     mu_z = a_z+rho_z*z
-    z_limits = [mu_z-4*sigma_z,mu_z+4*sigma_z]
+    z_limits = [max(mu_z-4*sigma_z,zgrid[0]),min(mu_z+4*sigma_z,zgrid[1])]
     mu_q = a_q+rho_q*q
-    q_limits = [mu_q-4*sigma_q,mu_q+4*sigma_q]
+    q_limits = [max(mu_q-4*sigma_q,qgrid[0]),min(mu_q+4*sigma_q,qgrid[1])]
+
 
     #den = integrate.dblquad(lambda zprime,qprime: likelihood_c(a_q,z,q,zprime,qprime),q_limits[0],q_limits[1]
     #                ,lambda q:z_limits[0],lambda z: z_limits[1])[0]
@@ -220,11 +261,11 @@ def getREgrid(ngrid):
     '''
     Computes a grid to solve the RE problem over
     '''
-    a_q_grid = linspace(a_q_bar0-3*a_q_sigma0,a_q_bar0+3*a_q_sigma0,ngrid[2])
+    a_q_grid = linspace(a_q_bar0-4*a_q_sigma0,a_q_bar0+4*a_q_sigma0,ngrid[2])
     sig_z = sigma_z/sqrt(1.-rho_z**2)
     sig_q = sigma_q/sqrt(1.-rho_q**2)
-    z_grid = linspace(a_z/(1-rho_z)-3*sig_z,a_z/(1-rho_z)+3*sig_z,ngrid[0])  
-    q_grid = linspace(a_q_grid.min()/(1-rho_q)-3*sig_q,a_q_grid.max()/(1-rho_z)+3*sig_q,ngrid[1])
+    z_grid = linspace(a_z/(1-rho_z)-4*sig_z,a_z/(1-rho_z)+4*sig_z,ngrid[0])  
+    q_grid = linspace(a_q_grid.min()/(1-rho_q)-4*sig_q,a_q_grid.max()/(1-rho_z)+4*sig_q,ngrid[1])
     
     return[z_grid,q_grid,a_q_grid]
     
