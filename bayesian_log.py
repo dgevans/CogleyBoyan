@@ -53,25 +53,25 @@ class BellmanMap(object):
         V = c**(1.-gamma)/(1.-gamma)+beta*g**(1.-gamma)*EV
         return array([c,g]),V
         
-def computePosteriors(Para,sHist,sGrid,skip=1):
+def computePosteriors(Para,s0,n = 1000):
     '''
     Computes the posteriors across states 
     '''
-    T,N,_ =  sHist.shape
-    samples = primitives.makeGrid([arange(0,N),arange(2,T,skip)])
     #split up samples
     size = w.Get_size()
     rank = w.Get_rank()
-    n = len(samples)
     m = n/size
     r = n%size
-    my_samples = samples[rank*m+min(rank,r):(rank+1)*m+min(rank+1,r)]
+    my_n = m
+    if rank < r:
+        my_n += 1
     #constuct domain
     my_domain = []
-    for sample in my_samples:
-        i,t = sample
-        s = sHist[t,i,:]
-        mu = Para.lp.getPosterior(sHist[:t,i,:])
+    for j in range(my_n):
+        t = int(log(random.rand())/log(Para.beta))+1
+        sHist = Para.lp.drawSample(1,t,s0)[0]
+        s = sHist[t-1,0,:]
+        mu = Para.lp.getPosterior(sHist[:,0,:])
         my_domain.append((s,mu))
     
     #Para.my_domain = primitives.makeGrid_generic((sGrid,my_posteriors))
@@ -81,8 +81,7 @@ def computePosteriors(Para,sHist,sGrid,skip=1):
     #now reset my_domain to ch
     Para.my_domain = my_domain
     print len(Para.my_domain)
-    
-    return my_samples
+
     
 def getX(Para):
     '''
@@ -111,14 +110,23 @@ def solveBellman(Para,Vf):
     X = getX(Para)
     T = BellmanMap(Para)
     Vs_old = Vf(X).flatten()
-    diff = 1.
-    while diff > 1e-5:
+    diff = 100.
+    diff_old = diff
+    a = 0.05
+    n_reset = 10
+    while diff > 1e-4:
         Vs = iterateBellman(T,Vf,Para)
         #Now fit the new value function
         c_old = Vf.f.get_c()
         Vf.fit(X,Vs)
-        Vf.f.set_c(0.05*Vf.f.get_c()+0.95*c_old)
-        diff = max(abs((Vs-Vs_old)/Vs_old))
+        Vf.f.set_c(a*Vf.f.get_c()+(1-a)*c_old)
+        diff = max(abs((Vs-Vs_old)/Vs_old))/a
+        if diff > diff_old and n_reset >9:
+            a /= 2.
+            n_reset = 0
+        diff_old = diff
+        n_reset += 1
+        
         if rank == 0:
             print diff
         Vs_old = Vs

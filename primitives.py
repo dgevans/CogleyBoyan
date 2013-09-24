@@ -6,10 +6,8 @@ Created on Sun May 19 14:41:35 2013
 """
 from LearningProblems import a_q_c
 from numpy import *
-from cpp_interpolator import *
-from copy import copy
 from scipy.linalg import sqrtm
-
+import hermite
 class parameters(object):
     
     gamma = 2.0
@@ -26,15 +24,17 @@ class ValueFunction(object):
     Holds the interpolated value functions
     '''
     eta = 1e-8
-    def __init__(self,Para,types,order,k,normalize = False):
+    beta = 0.
+    gamma = 0.
+    def __init__(self,X,V,order,max_order = None,normalize = False):
         '''
         Inits the value function object
         '''
-        self.f = None
-        self.INFO = interpolate_INFO(types,order,k)
-        self.beta = Para.beta
-        self.gamma = Para.gamma
         self.normalize = normalize
+        self.max_order = max_order
+        self.order = order
+        self.f = None
+        self.fit(X,V)
     
     def fit(self,X,V):
         '''
@@ -44,29 +44,22 @@ class ValueFunction(object):
         if self.normalize:
             self.mu = mean(X,0).reshape(1,X.shape[1])
             self.S = linalg.inv(real(sqrtm(cov(X.T))))
-            self.X = (X-self.mu).dot(self.S)
+            Xhat = (X-self.mu).dot(self.S)
         else:
-            self.X = X
-        if self.eta > 0:
-            self.f = interpolate(self.X,Y,self.INFO,self.eta)
+            Xhat = X
+            
+        if self.f == None:
+            self.f = hermite.interpolate(Xhat,Y,self.order,self.eta,self.max_order)
         else:
-            self.f = interpolate(self.X,Y,self.INFO)
-    def fitV(self,V):
-        '''
-        Fits the constant consumption per capital equivalent
-        '''
-        Y = ((1.-self.beta)*(1.-self.gamma)*V)**(1./(1-self.gamma))
-        Phi = self.f.get_Phi(self.X)
-        A = (Phi.T.dot(Phi)-self.eta*eye(Phi.shape[1]))
-        c = linalg.solve(A,Phi.T.dot(Y))
-        self.f.set_c(c)
+            self.f.fit(Xhat,Y)
+
     def __call__(self,X):
         '''
         Returns the value function at the numpy array X
         '''
         if self.normalize:
             x = (X-self.mu).dot(self.S)
-            x = vectorize(lambda z:min(max(z,-2.),2.))(x)
+            x = vectorize(lambda z:min(max(z,-3.),3.))(x)
         else:
             x = X    
         return (self.f(x))**(1.-self.gamma)/((1-self.gamma)*(1.-self.beta))

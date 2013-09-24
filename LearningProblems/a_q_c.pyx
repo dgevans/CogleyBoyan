@@ -150,6 +150,16 @@ cdef class posterior_distribution:
         mu_q_u = a_q_limits[1]+rho_q*self.q
         q_limits = [min(mu_q_l-2*sigma_q,qgrid[0]),max(mu_q_u+2*sigma_q,qgrid[1])]   
         return a_q_limits,z_limits,q_limits
+        
+    def __reduce__(self):
+        '''
+        Reduce function allows for pickling of posterior object
+        '''
+        state = [self.z,self.q]
+        return (rebuild_posterior_distribution,(self.a_q_bar,self.a_q_sigma,state))
+        
+def rebuild_posterior_distribution(a_q_bar,a_q_sigma,state):
+    return posterior_distribution(a_q_bar,a_q_sigma,state)
 
 def prior(a_q):
     '''
@@ -280,14 +290,17 @@ def getPosterior(stateHist):
     '''
     qHist = stateHist[:,1]
     t = len(qHist)
-    y = qHist[1:] - rho_q*qHist[:t-1]
-    S0 = a_q_sigma0**2
-    S = 1./(S0**(-1)+ (t-1)/sigma_q**2)
-    a_q_sigma = sqrt(S)
-    a_q_bar = S*(S0**(-1)*a_q_bar0 + sum(y)/sigma_q**2)
-    
-    return posterior_distribution(a_q_bar,a_q_sigma,stateHist[t-1,:])
-    
+    if t >1:
+        y = qHist[1:] - rho_q*qHist[:t-1]
+        S0 = a_q_sigma0**2
+        S = 1./(S0**(-1)+ (t-1)/sigma_q**2)
+        a_q_sigma = sqrt(S)
+        a_q_bar = S*(S0**(-1)*a_q_bar0 + sum(y)/sigma_q**2)
+        
+        return posterior_distribution(a_q_bar,a_q_sigma,stateHist[t-1,:])
+    else:
+        return posterior_distribution(a_q_bar0,a_q_sigma0,stateHist[0,:])
+        
 def drawSample(N,T,state0):
     '''
     Draws N time series of length T starting from state0

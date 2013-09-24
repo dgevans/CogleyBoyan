@@ -28,20 +28,20 @@ Para.lp.set_integrate_order(4)
 
 #Now solve bayesian problem
 grid = Para.lp.getREgrid(array(norder))
-XRE = primitives.makeGrid(grid)
-sHist = Para.lp.drawSample(1000,100,[mean(XRE[:,0]),mean(XRE[:,1])])[0]
+#sHist = Para.lp.drawSample(1000,1000,[mean(XRE[:,0]),mean(XRE[:,1])])[0]
 print 'computing posteriors'
-zgrid,qgrid,_ = Para.lp.getREgrid(norder)
-sGrid = primitives.makeGrid((zgrid,qgrid))
-my_samples = bayesian.computePosteriors(Para,sHist,sGrid,skip=10)
+s0 =[mean(grid[0]),mean(grid[1])]
+bayesian.computePosteriors(Para,s0,2000)
 X = bayesian.getX(Para)
-Vs = -10*ones(len(X))#VfRE(X[:,:3])#map(lambda x: VfRE(x[:3]),X)
-Vf = primitives.ValueFunction(Para,['hermite','hermite','hermite','hermite'],[2,2,2,2],[1]*4,normalize=True)
-Vf.fit(X,Vs)
-
+#Vs = VfRE(X[:,:3])#map(lambda x: VfRE(x[:3]),X)
+primitives.ValueFunction.gamma = Para.gamma
+primitives.ValueFunction.beta = Para.beta
+primitives.ValueFunction.eta = 0.
+Vf = primitives.ValueFunction(X,-10.*ones(len(X)),[3,3,3,3],max_order = 3,normalize = True)
 Vf = bayesian.solveBellman(Para,Vf)
+
 if rank == 0:
     fout = open('solution.dat','w')
     import cPickle
-    cPickle.dump((Vf,sHist),fout)
+    cPickle.dump((Vf),fout)
     fout.close()
