@@ -11,8 +11,13 @@ from scipy import integrate
 from sparse_integrator import sparse_integrator
 from sparse_integrator import sparse_integrator_normal
 
-cdef extern from "gsl/gsl_randist.h":
-    double gsl_ran_gaussian_pdf(double x,double sigma)
+cdef double gsl_ran_gaussian_pdf(double x,double sigma):
+    '''
+    Computes the random normal pdf
+    '''
+    cdef double sigma_sq = sigma*sigma
+    return (1./(np.sqrt(2*pi)*sigma))*np.exp(-x*x/(2*sigma_sq))
+    
 
 n_param = 1
 
