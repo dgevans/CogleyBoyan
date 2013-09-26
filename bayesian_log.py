@@ -6,12 +6,9 @@ Created on Wed Aug 21 15:01:15 2013
 """
 
 from numpy import *
+from IPython.parallel import Client
+from IPython.parallel import interactive
 
-from mpi4py import MPI
-import primitives
-import pdb
-
-w = MPI.COMM_WORLD
 
 class BellmanMap(object):
     '''
@@ -51,74 +48,72 @@ class BellmanMap(object):
         g = (z+q*(1.-delta))/(q+alpha)
         c = alpha*g
         V = c**(1.-gamma)/(1.-gamma)+beta*g**(1.-gamma)*EV
-        return array([c,g]),V
+        return V,array([c,g])
         
 def computePosteriors(Para,s0,n = 1000):
     '''
     Computes the posteriors across states 
     '''
-    #split up samples
-    size = w.Get_size()
-    rank = w.Get_rank()
-    m = n/size
-    r = n%size
-    my_n = m
-    if rank < r:
-        my_n += 1
     #constuct domain
-    my_domain = []
-    for j in range(my_n):
+    domain = []
+    for j in range(n):
         t = int(log(random.rand())/log(Para.beta))+1
         sHist = Para.lp.drawSample(1,t,s0)[0]
         s = sHist[t-1,0,:]
         mu = Para.lp.getPosterior(sHist[:,0,:])
-        my_domain.append((s,mu))
+        domain.append((s,mu))
     
     #Para.my_domain = primitives.makeGrid_generic((sGrid,my_posteriors))
     #for domain in Para.my_domain:
     #    s,mu = domain
     #    domain[1] = mu.set_state(s)
     #now reset my_domain to ch
-    Para.my_domain = my_domain
-    print len(Para.my_domain)
+    return domain
 
     
 def getX(Para):
     '''
     Computes a matrix of (z,q) and moments based on the samples drawn
     '''
-    rank = w.Get_rank()
     #get each indivdual X
-    my_X = []
-    for state in Para.my_domain:
+    X = []
+    for state in Para.domain:
         s,mu = state
-        my_X.append(hstack((s,mu.moments())))
-    my_X = vstack(my_X)
+        X.append(hstack((s,mu.moments())))    
+    return vstack(X)
     
-    X = w.gather(my_X) 
-    if rank == 0:
-        X = vstack(X)
-    
-    return w.bcast(X)
-    
-def solveBellman(Para,Vf):
+def solveBellman_parallel(Para,Vf):
     '''
     Solves the bellman equation for the states computed need to run 
     computePosteriors before this.
     '''
-    rank = w.Get_rank()
+    cl = Client()
+    v = cl[:]#get the view for the client
+    v.block = True
+    
+    
     X = getX(Para)
-    T = BellmanMap(Para)
     Vs_old = Vf(X).flatten()
     diff = 100.
     diff_old = diff
     a = 0.05
     n_reset = 10
+    #Setup the bellman Map on the engines
+    v.execute('from bayesian_log import BellmanMap')
+    v.execute('T = BellmanMap(Para)')
+
+     
     while diff > 1e-4:
-        Vs = iterateBellman(T,Vf,Para)
+        #send the value function to the engines and create new value function        
+        v['Vf'] = Vf
+        v.execute('Vnew = T(Vf)')
+        #Now apply Vnew on engines to each element of Para.domain
+        f = interactive(lambda state: Vnew(state)[0])
+        Vs = hstack(v.map(f,Para.domain))
         #Now fit the new value function
         c_old = Vf.f.get_c()
         Vf.fit(X,Vs)
+        #mix between old coefficients and new ones
         Vf.f.set_c(a*Vf.f.get_c()+(1-a)*c_old)
         diff = max(abs((Vs-Vs_old)/Vs_old))/a
         if diff > diff_old and n_reset >9:
@@ -126,28 +121,62 @@ def solveBellman(Para,Vf):
             n_reset = 0
         diff_old = diff
         n_reset += 1
-        
-        if rank == 0:
-            print diff
+        print diff
         Vs_old = Vs
         
     return Vf
     
-def iterateBellman(T,Vf,Para):
+def solveBellman(Para,Vf):
     '''
+    Solves the bellman equation for the states computed need to run 
+    computePosteriors before this.  Using a single core
     '''
-    rank = w.Get_rank()
-    Vnew = T(Vf)
-    #my_Vs = hstack(map(lambda state:Vnew(state)[1],Para.my_domain))
-    my_Vs = zeros(len(Para.my_domain))
-    for i,state in enumerate(Para.my_domain):
-        my_Vs[i] = Vnew(state)[1]
-        if isnan(my_Vs[i]):
-            pdb.set_trace()
-    Vs = w.gather(my_Vs)
-    if rank == 0:
-        Vs = hstack(Vs)
-    return w.bcast(Vs)
+    
+    X = getX(Para)
+    Vs_old = Vf(X).flatten()
+    diff = 100.
+    diff_old = diff
+    a = 0.05
+    n_reset = 10
+    #Setup the bellman Map on the engines
+    
+    T = BellmanMap(Para)
+     
+    while diff > 1e-4:
+        #Now apply Vnew on engines to each element of Para.domain
+        Vnew = T(Vf)
+        Vs = hstack(v.map(lambda state:Vnew(state)[0],Para.domain))
+        #Now fit the new value function
+        c_old = Vf.f.get_c()
+        Vf.fit(X,Vs)
+        #mix between old coefficients and new ones
+        Vf.f.set_c(a*Vf.f.get_c()+(1-a)*c_old)
+        diff = max(abs((Vs-Vs_old)/Vs_old))/a
+        if diff > diff_old and n_reset >9:
+            a /= 2.
+            n_reset = 0
+        diff_old = diff
+        n_reset += 1
+        print diff
+        Vs_old = Vs
+        
+    return Vf
+    
+#def iterateBellman(T,Vf,Para):
+#    '''
+#    '''
+#    rank = w.Get_rank()
+#    Vnew = T(Vf)
+#    #my_Vs = hstack(map(lambda state:Vnew(state)[1],Para.my_domain))
+#    my_Vs = zeros(len(Para.my_domain))
+#    for i,state in enumerate(Para.my_domain):
+#        my_Vs[i] = Vnew(state)[1]
+#        if isnan(my_Vs[i]):
+#            pdb.set_trace()
+#    Vs = w.gather(my_Vs)
+#    if rank == 0:
+#        Vs = hstack(Vs)
+#    return w.bcast(Vs)
         
     
         

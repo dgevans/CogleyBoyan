@@ -23,10 +23,7 @@ class ValueFunction(object):
     '''
     Holds the interpolated value functions
     '''
-    eta = 1e-8
-    beta = 0.
-    gamma = 0.
-    def __init__(self,X,V,order,max_order = None,normalize = False):
+    def __init__(self,order,max_order = None,normalize = False):
         '''
         Inits the value function object
         '''
@@ -34,7 +31,9 @@ class ValueFunction(object):
         self.max_order = max_order
         self.order = order
         self.f = None
-        self.fit(X,V)
+        self.eta = 1e-8
+        self.beta = 0.
+        self.gamma = 0.
     
     def fit(self,X,V):
         '''

@@ -161,10 +161,8 @@ cdef class posterior_distribution:
         Reduce function allows for pickling of posterior object
         '''
         state = [self.z,self.q]
-        return (rebuild_posterior_distribution,(self.a_q_bar,self.a_q_sigma,state))
+        return (posterior_distribution,(self.a_q_bar,self.a_q_sigma,state))
         
-def rebuild_posterior_distribution(a_q_bar,a_q_sigma,state):
-    return posterior_distribution(a_q_bar,a_q_sigma,state)
 
 def prior(a_q):
     '''
